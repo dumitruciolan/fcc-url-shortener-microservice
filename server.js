@@ -5,11 +5,11 @@ const express = require("express"),
   mongo = require("mongodb"),
   mongoose = require("mongoose"),
   bodyParser = require("body-parser"),
+  db = mongoose.connection,
+  port = process.env.PORT,
   cors = require("cors"),
   dns = require("dns"),
-  app = express(),
-  port = process.env.PORT || 3000,
-  db = mongoose.connection;
+  app = express();
 
 // parse the POST bodies
 app.use(cors());
@@ -24,8 +24,9 @@ mongoose.connect(process.env.DB_URI, {
 
 // check db connection status
 db.once("open", () => {
-  if (db.readyState === 1) console.log("DB Connection Successful!");
-  db.on("error", console.error.bind(console, "DB Connection Error!"));
+  db.readyState === 1
+    ? console.log("DB Connection Successful!")
+    : console.log("Didn't connect to the DB!");
 });
 
 // set db schema & model
@@ -49,7 +50,7 @@ app.post("/api/shorturl/new", (req, res) => {
   // check if it's a valid domain
   dns.lookup(link, (err, addresses, family) => {
     // return error msg if domain wasn't found
-    (err) ? res.json({ error: "invalid URL" }) : onComplete();
+    err ? res.json({ error: "invalid URL" }) : onComplete();
   });
 
   const onComplete = () => {
@@ -60,12 +61,12 @@ app.post("/api/shorturl/new", (req, res) => {
       .exec()
       .then(docs => {
         theData = docs;
-      // afterwards, create a document instance & generate the short url
-        var doc = new urlModel({ id: theData.length, url: req.body.url });
-        theData = theData.filter(obj => obj["url"] === req.body.url);
+        // afterwards, create a document instance & generate the short url
+        var doc = new urlModel({ id: theData.length, url: link });
+        theData = theData.filter(obj => obj["url"] === link);
         // check if already in db
         if (theData.length === 0) {
-          doc// save it to the db if not there
+          doc // save it to the db if not there
             .save()
             .then(result => {
               res.json(result);
@@ -82,13 +83,12 @@ app.post("/api/shorturl/new", (req, res) => {
         console.log(err);
         res.json({ error: err });
       });
-  }
+  };
 });
 
 // retrieving the shortened URL from the db
 app.get("/api/shorturl", (req, res) => {
   urlModel
-  // maybe use mongoose findOne URL for this?
     .find()
     .exec()
     .then(d => res.json(d))
@@ -98,18 +98,19 @@ app.get("/api/shorturl", (req, res) => {
     });
 });
 
-// Redirect user to URL
-app.get("/api/shorturl/:short", (req, res) => {
-  const { short } = req.params;
+// URL redirecting
+app.get("/api/shorturl/:id", (req, res) => {
+  const { id } = req.params;
+
   urlModel
-    .find({ id: short })
+    .find({ id })
     .exec()
-    .then(docs => {
-      res.redirect(docs[0]["url"]);
-    }) // handle error situations
+    // add HTTPS (cybersecurity best practice)
+    .then(docs => res.redirect("https://" + docs[0]["url"]))
+    // handle error situations
     .catch(err => {
       console.log(err);
-      res.json({ error: err });
+      res.json({ error: "invalid URL" });
     });
 });
 
@@ -117,5 +118,6 @@ app.listen(port, () => {
   console.log("Node.js listening ...");
 });
 
-// multiple websites can be added if protocol is not mentioned
-// fix the returned object
+// doesn't work for subpages (e.g.: https://www.freecodecamp.org/forum/)
+// adding multiple entries with the same id if no http/https specified
+// fix the returned object (current one returns too much info)
