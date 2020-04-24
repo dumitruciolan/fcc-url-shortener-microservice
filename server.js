@@ -22,63 +22,100 @@ mongoose.connect(process.env.DB_URI, {
   useUnifiedTopology: true
 });
 
-// database connection error?
-db.on("error", console.error.bind(console, "connection error:"));
-
+// check db connection status
 db.once("open", () => {
-  // check moongose connection status
-  if (db.readyState === 1) console.log("Connection Successful!");
+  if (db.readyState === 1) console.log("DB Connection Successful!");
+  db.on("error", console.error.bind(console, "DB Connection Error!"));
+});
 
-  // set db schema & model (url & id)
-  const urlSchema = new mongoose.Schema(
-      {
-        original_url: String,
-        short_url: Number
-      }, // shows when the entry was created
-      { timestamps: true }
-    ),
-    Entry = mongoose.model("short_url", urlSchema);
+// set db schema & model
+const urlSchema = new mongoose.Schema({
+    id: Number,
+    url: String
+  }),
+  urlModel = mongoose.model("url", urlSchema);
 
-  // route to main HTML page
-  app.get("/", (req, res) => {
-    res.sendFile(`${process.cwd()}/views/index.html`);
+// route to main HTML page
+app.get("/", (_, res) => {
+  res.sendFile(`${process.cwd()}/views/index.html`);
+});
+
+// receive a POST request with an URL to be saved on db
+app.post("/api/shorturl/new", (req, res) => {
+  const { url } = req.body,
+    // remove the transfer protocol from url
+    link = url.replace(/(^\w+:|^)\/\//gi, "");
+
+  // check if it's a valid domain
+  dns.lookup(link, (err, addresses, family) => {
+    // return error msg if domain wasn't found
+    (err) ? res.json({ error: "invalid URL" }) : onComplete();
   });
 
-  // receive a POST request with an URL to be saved on db
-  app.post("/api/shorturl/new", (req, res) => {
-    const { url } = req.body,
-      // remove the transfer protocol from url
-      link = url.replace(/(^\w+:|^)\/\//, "");
+  const onComplete = () => {
+    let theData;
 
-    // check if it's a valid domain
-    dns.lookup(link, (err, addresses, family) => {
-      // return error msg if domain wasn't found
-      if (err) res.json({ error: "invalid URL" });
-      // otherwise, generate the shortened url
-
-      // afterwards, create a document instance
-      let entry = new Entry({ original_url: link, short_url: "" });
-
-      // and save it to the db
-      entry.save(err => {
-        if (err) return console.error(err);
+    urlModel
+      .find()
+      .exec()
+      .then(docs => {
+        theData = docs;
+      // afterwards, create a document instance & generate the short url
+        var doc = new urlModel({ id: theData.length, url: req.body.url });
+        theData = theData.filter(obj => obj["url"] === req.body.url);
+        // check if already in db
+        if (theData.length === 0) {
+          doc// save it to the db if not there
+            .save()
+            .then(result => {
+              res.json(result);
+            })
+            .catch(err => {
+              console.log(err);
+              res.json({ error: err });
+            });
+        } else {
+          res.json({ error: `URL already in database as ${theData[0].id}` });
+        }
+      })
+      .catch(err => {
+        console.log(err);
+        res.json({ error: err });
       });
-
-      // lastly, display the entry in JSON format
-      res.json({ original_url: link, short_url: "" });
-    });
-  });
+  }
 });
 
 // retrieving the shortened URL from the db
-app.get("api/shorturl/:id", (req, res) => {
-  // mongoose findOne URL saved for this id
-  // Redirect user to URL with res(redirect)
-  // handle error situations
+app.get("/api/shorturl", (req, res) => {
+  urlModel
+  // maybe use mongoose findOne URL for this?
+    .find()
+    .exec()
+    .then(d => res.json(d))
+    .catch(err => {
+      console.log(err);
+      res.json({ error: err });
+    });
+});
+
+// Redirect user to URL
+app.get("/api/shorturl/:short", (req, res) => {
+  const { short } = req.params;
+  urlModel
+    .find({ id: short })
+    .exec()
+    .then(docs => {
+      res.redirect(docs[0]["url"]);
+    }) // handle error situations
+    .catch(err => {
+      console.log(err);
+      res.json({ error: err });
+    });
 });
 
 app.listen(port, () => {
   console.log("Node.js listening ...");
 });
 
-// we shouldn't add duplicates in the db!
+// multiple websites can be added if protocol is not mentioned
+// fix the returned object
