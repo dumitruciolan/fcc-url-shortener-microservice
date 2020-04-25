@@ -2,19 +2,16 @@
 
 // Basic Configuration
 const express = require("express"),
-  mongo = require("mongodb"),
   mongoose = require("mongoose"),
   bodyParser = require("body-parser"),
-  db = mongoose.connection,
-  port = process.env.PORT,
   cors = require("cors"),
   dns = require("dns"),
   app = express();
 
 // parse the POST bodies
-app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use("/public", express.static(process.cwd() + "/public"));
+app.use("/public", express.static(`${process.cwd()}/public`));
+app.use(cors());
 
 // connect to the database
 mongoose.connect(process.env.DB_URI, {
@@ -23,8 +20,8 @@ mongoose.connect(process.env.DB_URI, {
 });
 
 // check db connection status
-db.once("open", () => {
-  db.readyState === 1
+mongoose.connection.once("open", () => {
+  mongoose.connection.readyState === 1
     ? console.log("DB Connection Successful!")
     : console.log("Didn't connect to the DB!");
 });
@@ -43,81 +40,86 @@ app.get("/", (_, res) => {
 
 // receive a POST request with an URL to be saved on db
 app.post("/api/shorturl/new", (req, res) => {
-  const { url } = req.body,
-    // remove the transfer protocol from url
-    link = url.replace(/(^\w+:|^)\/\//gi, "");
+  const { url } = req.body;
+  // remove both transfer protocol & www from url
+  let link = url.replace(/(^\w+:|^)\/\/|(www\.)/gi, "");
 
-  // check if it's a valid domain
-  dns.lookup(link, (err, addresses, family) => {
-    // return error msg if domain wasn't found
-    err ? res.json({ error: "invalid URL" }) : onComplete();
+  // retrieve only the domain and check if it's a valid one
+  dns.lookup(link.split("/")[0], (err, addresses, family) => {
+    // return error if domain is invalid, else proceed further
+    err ? res.json({ error: "invalid URL" }) : onSuccess();
   });
 
-  const onComplete = () => {
-    let theData;
+  const onSuccess = () => {
+    let data;
 
     urlModel
       .find()
       .exec()
-      .then(docs => {
-        theData = docs;
-        // afterwards, create a document instance & generate the short url
-        var doc = new urlModel({ id: theData.length, url: link });
-        theData = theData.filter(obj => obj["url"] === link);
-        // check if already in db
-        if (theData.length === 0) {
-          doc // save it to the db if not there
+      .then(entries => {
+        data = entries;
+        // create the document entry & generate the short url
+        const entry = new urlModel({ id: data.length, url: link });
+        // check if already in the db
+        data = data.filter(obj => obj["url"] === link);
+        if (data.length === 0) {
+          entry // add it if not there
             .save()
+            // return the required JSON structure
             .then(result => {
-              res.json(result);
+              res.json({ original_url: result.url, short_url: result.id });
             })
             .catch(err => {
               console.log(err);
-              res.json({ error: err });
+              res.json({ error: "invalid URL" });
             });
         } else {
-          res.json({ error: `URL already in database as ${theData[0].id}` });
+          res.json({ error: `URL already in database as ${data[0].id}` });
         }
       })
       .catch(err => {
         console.log(err);
-        res.json({ error: err });
+        res.json({ error: "invalid URL" });
       });
   };
 });
 
-// retrieving the shortened URL from the db
-app.get("/api/shorturl", (req, res) => {
+// retrieving all entries from the db
+app.get("/api/shorturl", (_, res) => {
   urlModel
     .find()
     .exec()
     .then(d => res.json(d))
     .catch(err => {
       console.log(err);
-      res.json({ error: err });
+      res.json({ error: "invalid URL" });
     });
 });
 
-// URL redirecting
+// finding the URL by ID and redirecting
 app.get("/api/shorturl/:id", (req, res) => {
   const { id } = req.params;
-
   urlModel
     .find({ id })
     .exec()
-    // add HTTPS (cybersecurity best practice)
-    .then(docs => res.redirect("https://" + docs[0]["url"]))
-    // handle error situations
+    // add HTTPS & www (cybersecurity & performance best practice)
+    .then(entries => res.redirect(`https://www.${entries[0]["url"]}`))
+    // error handling
     .catch(err => {
       console.log(err);
       res.json({ error: "invalid URL" });
     });
 });
 
-app.listen(port, () => {
+// handle inexistent routes
+app.use((_, res) =>
+  res
+    .status(404)
+    .type("txt")
+    .send("Not found")
+);
+
+app.listen(process.env.PORT || 3000, err => {
+  if (err) throw err;
   console.log("Node.js listening ...");
 });
-
-// doesn't work for subpages (e.g.: https://www.freecodecamp.org/forum/)
-// adding multiple entries with the same id if no http/https specified
-// fix the returned object (current one returns too much info)
