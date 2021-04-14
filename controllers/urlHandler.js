@@ -1,33 +1,23 @@
-"use strict";
-
-let data;
+const { findLink, displayError } = require("../helpers/functions");
 const url = require("../models/urlModel");
 
+// add the new url to the db
+const saveLink = (result, entry) =>
+  entry
+    .save()
+    // return the required JSON structure
+    .then(res => result.json({ original_url: res.url, short_url: res.id }))
+    .catch(err => displayError(result, err));
+
 // used if dns lookup succeds
-const onSuccess = (link, res) => {
-  url
-    .find()
-    .exec()
+const findAndSave = (link, result) =>
+  findLink(url)
     .then(entries => {
-      data = entries;
       // create the document entry & generate the short url
-      const entry = new url({ id: data.length, url: link });
+      const entry = new url({ id: entries.length, url: link });
 
-      entry // add the new url to the db
-        .save()
-        // return the required JSON structure
-        .then(result => {
-          res.json({ original_url: result.url, short_url: result.id });
-        })
-        .catch(err => {
-          console.log(err);
-          res.json({ error: "invalid URL" });
-        });
+      saveLink(result, entry);
     })
-    .catch(err => {
-      console.log(err);
-      res.json({ error: "invalid URL" });
-    });
-};
+    .catch(err => displayError(result, err));
 
-module.exports = { onSuccess };
+module.exports = { findAndSave };
